@@ -90,22 +90,22 @@ class twoHotFilters(Layer):
     def __init__(self, **kwargs):
         self.filters = []
         super(twoHotFilters, self).__init__(**kwargs)
+        self.trainable = True
+
 
     def build(self, input_shape):
-        if len(self.filters) == 0:
-            inputLength = input_shape[-1]
-            for j in range(inputLength):
-                for k in range(1, inputLength-j):
-                    x = K.zeros(inputLength)
-                    x[j] = 1.0
-                    x[j+k] = 1.0
-                    # x = K.variable(value=x, dtype='float32', name='kernel'+str(j)+str(k))
-                    self.filters.append(x)
-                    # if j==0 and k==1:
-                    #     print (x)
-            self.filters = tf.transpose(self.filters)
-            self.set_weights(K.variable(value=self.filters, dtype='float32', name='filters').reshape(input_shape))
-            self.trainable_weights.append(self.weights)
+        inputLength = input_shape[-1]
+        my_index = -1
+        my_array = np.ndarray([input_shape[-1], input_shape[-1]*(input_shape[-1]-1)/2])
+        for j in range(inputLength):
+            for k in range(1, inputLength-j):
+                my_index += 1
+                my_array[j, my_index] = 1.0
+                my_array[j+k, my_index] = 1.0
+        self.filters = my_array
+        self.trainable_weights.append(self.filters)
+        # self.filters = np.transpose(self.filters)
+        # self.set_weights(self.filters)
         # self.kernel = self.add_weight(name='kernel',
         #                                 shape=(input_shape[1], self.output_dim),
         #                                 initializer='zeros',
@@ -116,11 +116,11 @@ class twoHotFilters(Layer):
         super(twoHotFilters, self).build(input_shape)
 
     def call(self, inputs, **kwargs):
-        l_inputs = K.dot(inputs, self.weights)
+        l_inputs = K.dot(inputs, self.filters)
         return l_inputs
 
     def compute_output_shape(self, input_shape):
-        out_size = input_shape[1]*(input_shape[1]-1)/2
+        out_size = input_shape[-1]*(input_shape[-1]-1)/2
         return input_shape[0], out_size
 
 
@@ -356,3 +356,4 @@ def seeded_initializer_BW(theShape):
 #           epochs=2,
 #           verbose=1,
 #           validation_data=(x_test, y_test) )
+
