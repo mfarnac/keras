@@ -69,7 +69,7 @@ def doubleConvMP(num_cores, asize, my_layers, my_input, my_min_core_size):
     return conv1
 
 
-epochs = 3
+epochs = 2
 h_batch_sizes = [64, 128, 256, 512, 1024, 2048]
 numberOfModels = 4
 insideCores = 3  # each convolution setup has this number of cores in the first layer and twice that in the second

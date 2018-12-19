@@ -1,0 +1,8 @@
+Notes on classification research - Fashion-MNIST
+
+The same model progresses further in accuracy with an increasing batch size sequence compared to a single batch size.
+Viz., a doubleConv+MP with two dense layers on top performs 9183, 9113, 9171 at 64 for 12 epochs vs 9248, 9245 on a scale of 6 batch sizes from 64 to 2048 for 2 epochs each. The same network does not exceed 9100 at a fixed 512 batch size.
+It should also be noted that the single-size models overfit to the high 9300s and the staggered models overfit to the low 9500s.
+
+Adding an alternating loss final model to a clutch of four different loss models adds 140-160 accurate results to the best minimodel.
+
