@@ -1,4 +1,4 @@
-import keras
+import keras.losses as ll
 import numpy as np
 from keras.datasets import mnist, fashion_mnist, cifar10, cifar100
 from keras.models import Model
@@ -7,6 +7,7 @@ from keras.layers import Conv2D, MaxPooling2D, Input
 from keras.layers import activations, Lambda
 from keras.preprocessing.image import ImageDataGenerator as Im
 from keras import backend as K
+
 import copy
 from keras.engine.topology import Layer
 import tensorflow as tf
@@ -67,6 +68,51 @@ class rotateImage(Layer):
         return input_shape
 
 
+class resampleImage(Layer):
+
+    def __init__(self, newSize, **kwargs):
+        self.size = newSize
+        self.outputSize = [newSize[0], newSize[1], 3]
+        super(resampleImage, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        # Create a trainable weight variable for this layer.
+        self.trainable = False
+        super(resampleImage, self).build(input_shape)  # Be sure to call this at the end
+
+    def call(self, x, **kwargs):
+        newx = tf.image.resize_images(
+                x,
+                self.size,
+                method=tf.image.ResizeMethod.BICUBIC,
+                align_corners=False,
+                preserve_aspect_ratio=False
+                )
+        return newx
+
+    def compute_output_shape(self, input_shape):
+        outputSizeish = (input_shape[0], self.size[0], self.size[1], 3)
+        return outputSizeish
+
+
+class squareInput(Layer):
+
+    def __init__(self, **kwargs):
+        super(squareInput, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        # Create a trainable weight variable for this layer.
+        self.trainable = False
+        super(squareInput, self).build(input_shape)  # Be sure to call this at the end
+
+    def call(self, x, **kwargs):
+        newx = tf.square(x)
+        return newx
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
 class roundInputs(Layer):
 
     def __init__(self, **kwargs):
@@ -85,25 +131,24 @@ class roundInputs(Layer):
         return input_shape
 
 
-class twoHotFilters(Layer):
+class twoHotFilters(Dense):
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         self.filters = []
-        super(twoHotFilters, self).__init__(**kwargs)
+        super(twoHotFilters, self).__init__(*args, **kwargs)
         self.trainable = True
-
 
     def build(self, input_shape):
         inputLength = input_shape[-1]
         my_index = -1
-        my_array = np.ndarray([input_shape[-1], input_shape[-1]*(input_shape[-1]-1)/2])
+        my_array = np.ndarray([inputLength, inputLength*(inputLength-1)/2])
         for j in range(inputLength):
             for k in range(1, inputLength-j):
                 my_index += 1
                 my_array[j, my_index] = 1.0
                 my_array[j+k, my_index] = 1.0
-        self.filters = my_array
-        self.trainable_weights.append(self.filters)
+        self.filters = [my_array]
+        self.set_weights(self.filters)
         # self.filters = np.transpose(self.filters)
         # self.set_weights(self.filters)
         # self.kernel = self.add_weight(name='kernel',
@@ -179,8 +224,8 @@ def getHmnistFlat():
     x_test = x_test.reshape(x_test.shape[0], 784)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train_i), (x_test, y_test_i)
 
 
@@ -190,8 +235,8 @@ def getHmnistConv():
     x_test = x_test.reshape(x_test.shape[0], 28, 28, 1)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train_i), (x_test, y_test_i)
 
 
@@ -201,8 +246,8 @@ def getHmnistConvQ():
     x_test = x_test.reshape(x_test.shape[0], 14, 56, 1)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train_i), (x_test, y_test_i)
 
 
@@ -212,8 +257,8 @@ def getHFmnistFlat():
     x_test = x_test.reshape(x_test.shape[0], 784)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train_i), (x_test, y_test_i)
 
 
@@ -223,8 +268,8 @@ def getHFmnistConv():
     x_test = x_test.reshape(x_test.shape[0], 28, 28, 1)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train), (x_test, y_test)
 
 
@@ -238,23 +283,23 @@ def getHFmnistConvNoise(noiseImagesNumber):
     x_train = np.concatenate([xint, data], axis=0)
     y_train = np.append(y_train, labels)
     x_test = x_test.reshape(x_test.shape[0], 28, 28, 1).astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train), (x_test, y_test)
 
 
 def getHmnistConvNoise(noiseImagesNumber):
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    data = np.random.randint(0, high=25, size=(noiseImagesNumber, 28, 28, 1), dtype='int').astype('float32')
+    data = np.random.randint(0, high=125, size=(noiseImagesNumber, 28, 28, 1), dtype='int').astype('float32')
     # labels = np.random.randint(0, high=10, size=noiseImagesNumber, dtype='int')
     labels = y_train[0:noiseImagesNumber]
     xint = x_train.reshape(x_train.shape[0], 28, 28, 1).astype('float32')
-    data = np.maximum(xint[0:noiseImagesNumber, :, :, :] + data, 255.0)
+    data = np.minimum(xint[0:noiseImagesNumber, :, :, :] + data, 255.0)
     x_train = np.concatenate([xint, data], axis=0)
     y_train = np.append(y_train, labels)
     x_test = x_test.reshape(x_test.shape[0], 28, 28, 1).astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train), (x_test, y_test)
 
 
@@ -264,8 +309,8 @@ def getHFmnistConvQ():
     x_test = x_test.reshape(x_test.shape[0], 14, 56, 1)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train), (x_test, y_test)
 
 
@@ -275,8 +320,23 @@ def getHcifar10():
     x_test = x_test.reshape(x_test.shape[0], 3, 32, 32)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
+    return (x_train, y_train), (x_test, y_test)
+
+
+def getCLcifar10():
+    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    x_train = x_train.reshape(x_train.shape[0], 3, 32, 32)
+    np.moveaxis(x_train, 1, -1)
+    x_train = x_train.reshape(x_train.shape[0], 32, 32, 3)
+    x_test = x_test.reshape(x_test.shape[0], 3, 32, 32)
+    np.moveaxis(x_test, 1, -1)
+    x_test = x_test.reshape(x_test.shape[0], 32, 32, 3)
+    x_train = x_train.astype('float32')
+    x_test = x_test.astype('float32')
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train), (x_test, y_test)
 
 
@@ -286,8 +346,8 @@ def getHcifar100():
     x_test = x_test.reshape(x_test.shape[0], 3, 32, 32)
     x_train = x_train.astype('float32')
     x_test = x_test.astype('float32')
-    x_train /= 255
-    x_test /= 255
+    x_train = x_train / 255 - 0.5
+    x_test = x_test / 255 - 0.5
     return (x_train, y_train), (x_test, y_test)
 
 
@@ -320,11 +380,45 @@ def seeded_initializer_BW(theShape):
     if len(theShape) != 4:
         raise ValueError('wrong shape size: expected 4 but got', len(theShape))
     output = K.variable(K.round(K.random_normal(theShape, mean=0.7, stddev=0.4)))
-    # for channelOut in range(theShape[3]):
-    #     for channelIn in range(theShape[2]):
-    #         for x in range
     return output
 
+
+def my_loss_function(y_true, y_pred):
+    return (0.95 + 0.1*K.cast(K.equal(K.argmax(y_true, axis=-1),
+                              K.argmax(y_pred, axis=-1)),
+                              K.floatx())) * ll.categorical_crossentropy(y_true, y_pred)
+
+
+def high_error(y_true, y_pred):
+    return (1.1 - 0.2*K.cast(K.equal(K.argmax(y_true, axis=-1),
+                             K.argmax(y_pred, axis=-1)),
+                             K.floatx())) * ll.categorical_crossentropy(y_true, y_pred)
+
+
+def high_accuracy(y_true, y_pred):
+    return (0.7 + 0.6*K.cast(K.equal(K.argmax(y_true, axis=-1),
+                             K.argmax(y_pred, axis=-1)),
+                             K.floatx())) * ll.categorical_crossentropy(y_true, y_pred)
+
+
+def cifar_high_accuracy(y_true, y_pred):
+    return (0.2 + 1.2*K.cast(K.equal(K.argmax(y_true, axis=-1),
+                             K.argmax(y_pred, axis=-1)),
+                             K.floatx())) * ll.categorical_crossentropy(y_true, y_pred)
+
+
+def cifar_high_error(y_true, y_pred):
+    return (1.6 - 1.0*K.cast(K.equal(K.argmax(y_true, axis=-1),
+                             K.argmax(y_pred, axis=-1)),
+                             K.floatx())) * ll.categorical_crossentropy(y_true, y_pred)
+
+
+def loss_factory((acc_or_loss, offset)):  # acc_or_loss should be negative for error
+    def a_loss(y_true, y_pred):
+        return((1.0-acc_or_loss*offset)+acc_or_loss*2.0*offset*K.cast(K.equal(K.argmax(y_true, axis=-1),
+                             K.argmax(y_pred, axis=-1)),
+                             K.floatx())) * ll.categorical_crossentropy(y_true, y_pred)
+    return  a_loss
 
 # (x_train, y_train), (x_test, y_test) = getHmnistConv()
 #
@@ -356,4 +450,3 @@ def seeded_initializer_BW(theShape):
 #           epochs=2,
 #           verbose=1,
 #           validation_data=(x_test, y_test) )
-

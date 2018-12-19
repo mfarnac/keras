@@ -1,26 +1,26 @@
 import keras
 import hLayers as h
 from keras.models import Model
-from keras.layers import Dense, Dropout, Flatten
+from keras.layers import Dense, Dropout, Flatten, SeparableConv1D
 from keras.layers import Conv2D, MaxPooling2D, Input
 # from keras.layers import activations, SeparableConv1D, SeparableConv2D
-
+import numpy as np
 '''
 cd Desk*/ker*
-python rectKernels_v2.py
+python rectKernels_PNR_v1.py
 '''
 
+
+''' Choose the dataset '''
 # data_set_type = 'cifar'
 # data_set_type = 'cifar100'
-data_set_type = 'mnist'
-# data_set_type = 'fashion_mnist'
+# data_set_type = 'mnist'
+data_set_type = 'fashion_mnist'
 # data_set_type = 'fashion_mnist_noise'
 # data_set_type = 'mnist_noise'
 noiseImagesNumber = 6000
 
 print('\n' + data_set_type)
-
-insideCores = 3  # each convolution setup has this number of cores in the first layer and twice that in the second
 
 num_classes = 10
 channel_style = 'channels_last'
@@ -45,36 +45,59 @@ else:
 
 y_train = keras.utils.to_categorical(y_train, num_classes)
 y_test = keras.utils.to_categorical(y_test, num_classes)
+''' End dataset parameter setting'''
 
 
-def doubleConvMP(num_cores, asize, my_layers, my_input):
+def doubleConvMP(num_cores, asize, my_layers, my_input, my_min_core_size):
     localSize = (asize[0], asize[1])
     conv1 = Conv2D(num_cores, localSize, data_format=channel_style, padding='valid', activation='relu')(my_input)
     my_layers.append(conv1)
-    localSize = (3, 3)
-    conv1 = Conv2D(2 * num_cores, localSize, data_format=channel_style, padding='same', activation='relu')(conv1)
-    my_layers.append(conv1)
+    # localSize = (3, 3)
+    # conv1 = Conv2D(2 * num_cores, localSize, data_format=channel_style, padding='valid', activation='relu')(conv1)
+    # my_layers.append(conv1)
     localSize = (asize[1], asize[0])
-    conv1 = Conv2D(4 * num_cores, localSize, data_format=channel_style, padding='valid', activation='relu')(conv1)
+    conv1 = Conv2D(2 * num_cores, localSize, data_format=channel_style, padding='valid', activation='relu')(conv1)
     my_layers.append(conv1)
+    adjustment = asize[0] + asize[1] - my_min_core_size
+    assert adjustment > -1
+    if adjustment > 0:
+        adj1 = adjustment / 2
+        adj2 = adj1 + adj1 % 2
+        conv1 = keras.layers.ZeroPadding2D(padding=((adj1, adj2), (adj1, adj2)), data_format=channel_style)(conv1)
     localSize = (2, 2)
-    localStride = (1, 1)
-    conv1 = MaxPooling2D(localSize, data_format=channel_style, strides=localStride, padding='valid')(conv1)
+    conv1 = MaxPooling2D(localSize, data_format=channel_style, padding='valid')(conv1)
     return conv1
 
 
-epochs = 1
-h_batch_sizes = [64, 128, 256, 512, 1024]
-print('minimodel batch sizes: ' + str(h_batch_sizes) + ' - ' + str(insideCores) + ' cores')
+epochs = 3
+h_batch_sizes = [64, 128, 256, 512, 1024, 2048]
+numberOfModels = 4
+insideCores = 3  # each convolution setup has this number of cores in the first layer and twice that in the second
+
+core_sizes = [(13, 7), (7, 5), (5, 7), (3, 9), (9, 3), (2, 10)]
+if data_set_type == 'fashion_mnist':
+    core_sizes = [[3, 3], [3, 7], [7, 5], [5, 9]]
+if data_set_type == 'cifar':
+    core_sizes = [[9, 5], [11, 5], [5, 7], [9, 3], [3, 9], [7, 7]]
+min_core_size = np.min(np.sum(core_sizes, -1))
+
+print(str(numberOfModels)+' models; minimodel batch sizes: ' + str(h_batch_sizes) +
+      ' - ' + str(insideCores) + ' cores: '+str(core_sizes))
 
 miniModels = []
 endpoints = []
 input1 = Input(shape=my_shape)
 h.printTime()
-for modelIndex in range(2):  # number of models being run
+
+losses = [h.high_accuracy, h.high_error, h.my_loss_function, keras.losses.categorical_crossentropy]
+''' Enter 1.0 for accuracy emphasis or -1.0 for loss emphasis, followed by the spread'''
+loss_details = [(1.0, 0.2), (-1.0, 0.3), (1.0, 0.8), (-1.0, 0.1)]
+
+for modelIndex in range(numberOfModels):  # number of models being run
     myConvolutions = []
-    for aSize in [(2, 14), (14, 2), (11, 5), (5, 11), (8, 8)]:
-        myConvolutions.append(doubleConvMP(insideCores, aSize, endpoints, input1))
+    my_loss = h.loss_factory(loss_details[modelIndex])
+    for aSize in core_sizes:
+        myConvolutions.append(doubleConvMP(insideCores, aSize, endpoints, input1, min_core_size))
     core1 = keras.layers.concatenate(myConvolutions)
     core1 = Dropout(0.2)(core1)
     core1 = Conv2D(64, (3, 3), data_format=channel_style, padding='valid', activation='relu')(core1)
@@ -99,32 +122,28 @@ for modelIndex in range(2):  # number of models being run
     beta2 = beta_2
     mylr = 0.001
 
-    print('Minimodel ' + str(modelIndex + 1))
+    print('\nMinimodel ' + str(modelIndex + 1))
     for local_batch_size in h_batch_sizes:
         print(local_batch_size)
-        model.compile(loss=h.high_accuracy,
-                      optimizer=keras.optimizers.Adam(lr=mylr, beta_1=beta1, beta_2=beta2),
+        model.compile(loss=my_loss,
+                      optimizer=keras.optimizers.Adam(lr=mylr),
                       metrics=['accuracy'])
         model.fit(x_train, y_train,
                   batch_size=local_batch_size,
                   epochs=epochs,
                   verbose=1,
-                  validation_data=(x_test, y_test))
-        model.compile(loss=h.high_error,
-                      optimizer=keras.optimizers.Adam(lr=mylr, beta_1=beta1, beta_2=beta2),
-                      metrics=['accuracy'])
-        model.fit(x_train, y_train,
-                  batch_size=local_batch_size,
-                  epochs=epochs,
-                  verbose=1,
-                  validation_data=(x_test, y_test))
+                  validation_data=None)
+        mylr *= 0.9
+    score = np.round(model.evaluate(x_test, y_test, batch_size=512, verbose=1), 4)
+    print(score[1])
 
 for aLayer in endpoints:
     aLayer.trainable = False
+
 core2 = keras.layers.concatenate(miniModels)
-# core2 = Reshape((-1,1))(core2)
-# core2 = Conv2D(128, (3, 3), data_format=channel_style, strides=1, padding='valid', activation='relu')(core2)
-# core2 = Flatten()(core2)
+core2 = keras.layers.Reshape([128, numberOfModels])(core2)
+core2 = SeparableConv1D(64, 1, data_format=channel_style, padding='valid', activation='relu')(core2)
+core2 = Flatten()(core2)
 core2 = Dense(128, activation='relu')(core2)
 core2 = Dropout(0.25)(core2)
 core2 = Dense(num_classes, activation='softmax')(core2)
@@ -138,29 +157,37 @@ beta_1 = 0.81
 beta_2 = 0.98
 beta1 = beta_1
 beta2 = beta_2
-mylr = 0.0002
+mylr = 0.0005
+final_epochs = 2
 for local_batch_size in h_batch_sizes:
     print(local_batch_size)
-    model.compile(loss=h.high_accuracy,
-                  optimizer=keras.optimizers.Adam(lr=mylr, beta_1=beta1, beta_2=beta2),
+    model.compile(loss=h.loss_factory((1.0, 0.5)),
+                  optimizer=keras.optimizers.Adam(lr=mylr),
                   metrics=['accuracy'])
     model.fit(x_train, y_train,
               batch_size=local_batch_size,  # note the local variable here.
-              epochs=3,
+              epochs=final_epochs,
               verbose=1,
               validation_data=(x_test, y_test))
-    model.compile(loss=h.high_error,
-                  optimizer=keras.optimizers.Adam(lr=mylr, beta_1=beta1, beta_2=beta2),
+    mylr *= 0.8
+    # model.compile(loss=h.high_error,
+    #               optimizer=keras.optimizers.Adam(lr=mylr),
+    #               metrics=['accuracy'])
+    # model.fit(x_train, y_train,
+    #           batch_size=local_batch_size,  # note the local variable here.
+    #           epochs=1,
+    #           verbose=1,
+    #           validation_data=(x_test, y_test))
+    model.compile(loss=h.loss_factory((1.0, 0.25)),
+                  optimizer=keras.optimizers.Adam(lr=mylr),
                   metrics=['accuracy'])
     model.fit(x_train, y_train,
               batch_size=local_batch_size,  # note the local variable here.
-              epochs=3,
+              epochs=final_epochs,
               verbose=1,
               validation_data=(x_test, y_test))
-    beta1 *= beta_1
-    beta2 *= beta_1
-    if local_batch_size >= 256:
-        for aLayer in endpoints:
-            aLayer.trainable = True
+
+    for aLayer in endpoints:
+        aLayer.trainable = True
 h.printTime()
 print('')
